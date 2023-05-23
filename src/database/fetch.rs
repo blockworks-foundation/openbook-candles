@@ -69,7 +69,7 @@ pub async fn fetch_fills_from(
         .await?;
     Ok(rows
         .into_iter()
-        .map(|r| PgOpenBookFill::from_row(r))
+        .map(PgOpenBookFill::from_row)
         .collect())
 }
 
@@ -111,6 +111,8 @@ pub async fn fetch_latest_finished_candle(
     }
 }
 
+/// Fetches all of the candles for the given market and resoultion, starting from the earliest.
+/// Note that this function will fetch ALL candles.
 pub async fn fetch_earliest_candles(
     pool: &Pool,
     market_name: &str,
@@ -142,7 +144,7 @@ pub async fn fetch_earliest_candles(
         .query(&stmt, &[&market_name, &resolution.to_string()])
         .await?;
 
-    Ok(rows.into_iter().map(|r| Candle::from_row(r)).collect())
+    Ok(rows.into_iter().map(Candle::from_row).collect())
 }
 
 pub async fn fetch_candles_from(
@@ -188,7 +190,7 @@ pub async fn fetch_candles_from(
         )
         .await?;
 
-    Ok(rows.into_iter().map(|r| Candle::from_row(r)).collect())
+    Ok(rows.into_iter().map(Candle::from_row).collect())
 }
 
 pub async fn fetch_top_traders_by_base_volume_from(
@@ -227,7 +229,7 @@ pub async fn fetch_top_traders_by_base_volume_from(
         .query(&stmt, &[&market_address_string, &start_time, &end_time])
         .await?;
 
-    Ok(rows.into_iter().map(|r| PgTrader::from_row(r)).collect())
+    Ok(rows.into_iter().map(PgTrader::from_row).collect())
 }
 
 pub async fn fetch_top_traders_by_quote_volume_from(
@@ -266,7 +268,7 @@ pub async fn fetch_top_traders_by_quote_volume_from(
         .query(&stmt, &[&market_address_string, &start_time, &end_time])
         .await?;
 
-    Ok(rows.into_iter().map(|r| PgTrader::from_row(r)).collect())
+    Ok(rows.into_iter().map(PgTrader::from_row).collect())
 }
 
 pub async fn fetch_coingecko_24h_volume(
@@ -277,8 +279,8 @@ pub async fn fetch_coingecko_24h_volume(
     let stmt = client
         .prepare(
             r#"select market as "address!",
-        sum(native_qty_paid) as "raw_quote_size!",
-        sum(native_qty_received) as "raw_base_size!"
+        sum(native_qty_received) as "raw_base_size!",
+        sum(native_qty_paid) as "raw_quote_size!"
         from fills 
         where "time" >= current_timestamp - interval '1 day' 
         and bid = true
@@ -290,7 +292,7 @@ pub async fn fetch_coingecko_24h_volume(
 
     Ok(rows
         .into_iter()
-        .map(|r| PgCoinGecko24HourVolume::from_row(r))
+        .map(PgCoinGecko24HourVolume::from_row)
         .collect())
 }
 
@@ -332,6 +334,6 @@ pub async fn fetch_coingecko_24h_high_low(
 
     Ok(rows
         .into_iter()
-        .map(|r| PgCoinGecko24HighLow::from_row(r))
+        .map(PgCoinGecko24HighLow::from_row)
         .collect())
 }

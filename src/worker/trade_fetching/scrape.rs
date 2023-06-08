@@ -6,7 +6,7 @@ use solana_client::{
 };
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::UiTransactionEncoding;
-use std::{collections::HashMap, str::FromStr, time::Duration as WaitDuration};
+use std::{collections::HashMap, str::FromStr};
 use tokio::sync::mpsc::Sender;
 
 use crate::{

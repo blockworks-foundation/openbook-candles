@@ -3,6 +3,7 @@ pub mod minute_candles;
 
 use chrono::Duration;
 use deadpool_postgres::Pool;
+use log::{error, warn};
 use strum::IntoEnumIterator;
 use tokio::{sync::mpsc::Sender, time::sleep};
 
@@ -13,6 +14,8 @@ use crate::{
 
 use self::higher_order_candles::batch_higher_order_candles;
 
+use super::metrics::METRIC_CANDLES_TOTAL;
+
 pub async fn batch_for_market(
     pool: &Pool,
     candles_sender: &Sender<Vec<Candle>>,
@@ -21,13 +24,13 @@ pub async fn batch_for_market(
     loop {
         let sender = candles_sender.clone();
         let market_clone = market.clone();
-        // let client = pool.get().await?;
+
         loop {
             sleep(Duration::milliseconds(2000).to_std()?).await;
             match batch_inner(pool, &sender, &market_clone).await {
                 Ok(_) => {}
                 Err(e) => {
-                    println!(
+                    error!(
                         "Batching thread failed for {:?} with error: {:?}",
                         market_clone.name.clone(),
                         e
@@ -36,7 +39,7 @@ pub async fn batch_for_market(
                 }
             };
         }
-        println!("Restarting {:?} batching thread", market.name);
+        warn!("Restarting {:?} batching thread", market.name);
     }
 }
 
@@ -47,14 +50,19 @@ async fn batch_inner(
 ) -> anyhow::Result<()> {
     let market_name = &market.name.clone();
     let candles = batch_1m_candles(pool, market).await?;
-    send_candles(candles, candles_sender).await;
-
+    send_candles(candles.clone(), candles_sender).await;
+    METRIC_CANDLES_TOTAL
+        .with_label_values(&[market.name.as_str()])
+        .inc_by(candles.clone().len() as u64);
     for resolution in Resolution::iter() {
         if resolution == Resolution::R1m {
             continue;
         }
         let candles = batch_higher_order_candles(pool, market_name, resolution).await?;
-        send_candles(candles, candles_sender).await;
+        send_candles(candles.clone(), candles_sender).await;
+        METRIC_CANDLES_TOTAL
+            .with_label_values(&[market.name.as_str()])
+            .inc_by(candles.clone().len() as u64);
     }
     Ok(())
 }

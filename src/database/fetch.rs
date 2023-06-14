@@ -4,7 +4,6 @@ use crate::structs::{
     openbook::PgOpenBookFill,
     resolution::Resolution,
     trader::PgTrader,
-    transaction::PgTransaction,
 };
 use chrono::{DateTime, Utc};
 use deadpool_postgres::{GenericClient, Pool};
@@ -16,13 +15,12 @@ pub async fn fetch_earliest_fill(
     let client = pool.get().await?;
 
     let stmt = r#"SELECT 
-        time as "time!",
-        bid as "bid!",
-        maker as "maker!",
-        native_qty_paid as "native_qty_paid!",
-        native_qty_received as "native_qty_received!",
-        native_fee_or_rebate as "native_fee_or_rebate!" 
-        from fills 
+        block_datetime as "time",
+        bid as "bid",
+        maker as "maker",
+        price as "price",
+        size as "size"
+        from openbook.openbook_fill_events 
         where market = $1 
         and maker = true
         ORDER BY time asc LIMIT 1"#;
@@ -44,16 +42,15 @@ pub async fn fetch_fills_from(
     let client = pool.get().await?;
 
     let stmt = r#"SELECT 
-         time as "time!",
-         bid as "bid!",
-         maker as "maker!",
-         native_qty_paid as "native_qty_paid!",
-         native_qty_received as "native_qty_received!",
-         native_fee_or_rebate as "native_fee_or_rebate!" 
-         from fills 
+         block_datetime as "time",
+         bid as "bid",
+         maker as "maker",
+         price as "price",
+         size as "size"
+         from openbook.openbook_fill_events 
          where market = $1
-         and time >= $2::timestamptz
-         and time < $3::timestamptz
+         and block_datetime >= $2::timestamptz
+         and block_datetime < $3::timestamptz
          and maker = true
          ORDER BY time asc"#;
 
@@ -71,17 +68,17 @@ pub async fn fetch_latest_finished_candle(
     let client = pool.get().await?;
 
     let stmt = r#"SELECT 
-        market_name as "market_name!",
-        start_time as "start_time!",
-        end_time as "end_time!",
-        resolution as "resolution!",
-        open as "open!",
-        close as "close!",
-        high as "high!",
-        low as "low!",
-        volume as "volume!",
-        complete as "complete!"
-        from candles
+        market_name as "market_name",
+        start_time as "start_time",
+        end_time as "end_time",
+        resolution as "resolution",
+        open as "open",
+        close as "close",
+        high as "high",
+        low as "low",
+        volume as "volume",
+        complete as "complete"
+        from openbook.candles
         where market_name = $1
         and resolution = $2
         and complete = true
@@ -107,17 +104,17 @@ pub async fn fetch_earliest_candles(
     let client = pool.get().await?;
 
     let stmt = r#"SELECT 
-        market_name as "market_name!",
-        start_time as "start_time!",
-        end_time as "end_time!",
+        market_name as "market_name",
+        start_time as "start_time",
+        end_time as "end_time",
         resolution as "resolution!",
-        open as "open!",
-        close as "close!",
-        high as "high!",
-        low as "low!",
-        volume as "volume!",
-        complete as "complete!"
-        from candles
+        open as "open",
+        close as "close",
+        high as "high",
+        low as "low",
+        volume as "volume",
+        complete as "complete"
+        from openbook.candles
         where market_name = $1
         and resolution = $2
         ORDER BY start_time asc"#;
@@ -139,17 +136,17 @@ pub async fn fetch_candles_from(
     let client = pool.get().await?;
 
     let stmt = r#"SELECT 
-        market_name as "market_name!",
-        start_time as "start_time!",
-        end_time as "end_time!",
-        resolution as "resolution!",
-        open as "open!",
-        close as "close!",
-        high as "high!",
-        low as "low!",
-        volume as "volume!",
-        complete as "complete!"
-        from candles
+        market_name as "market_name",
+        start_time as "start_time",
+        end_time as "end_time",
+        resolution as "resolution",
+        open as "open",
+        close as "close",
+        high as "high",
+        low as "low",
+        volume as "volume",
+        complete as "complete"
+        from openbook.candles
         where market_name = $1
         and resolution = $2
         and start_time >= $3
@@ -182,20 +179,20 @@ pub async fn fetch_top_traders_by_base_volume_from(
     let stmt = r#"SELECT 
             open_orders_owner, 
             sum(
-            native_qty_paid * CASE bid WHEN true THEN 0 WHEN false THEN 1 END
-            ) as "raw_ask_size!",
+            native_quantity_paid * CASE bid WHEN true THEN 0 WHEN false THEN 1 END
+            ) as "raw_ask_size",
             sum(
-            native_qty_received * CASE bid WHEN true THEN 1 WHEN false THEN 0 END
-            ) as "raw_bid_size!"
-        FROM fills
+            native_quantity_received * CASE bid WHEN true THEN 1 WHEN false THEN 0 END
+            ) as "raw_bid_size"
+        FROM openbook.openbook_fill_events
     WHERE  market = $1
             AND time >= $2
             AND time < $3
     GROUP  BY open_orders_owner
     ORDER  BY 
-        sum(native_qty_paid * CASE bid WHEN true THEN 0 WHEN false THEN 1 END) 
+        sum(native_quantity_paid * CASE bid WHEN true THEN 0 WHEN false THEN 1 END) 
         + 
-        sum(native_qty_received * CASE bid WHEN true THEN 1 WHEN false THEN 0 END) 
+        sum(native_quantity_received * CASE bid WHEN true THEN 1 WHEN false THEN 0 END) 
     DESC 
     LIMIT 10000"#;
 
@@ -217,20 +214,20 @@ pub async fn fetch_top_traders_by_quote_volume_from(
     let stmt = r#"SELECT 
             open_orders_owner, 
             sum(
-                native_qty_received * CASE bid WHEN true THEN 0 WHEN false THEN 1 END
-            ) as "raw_ask_size!",
+                native_quantity_received * CASE bid WHEN true THEN 0 WHEN false THEN 1 END
+            ) as "raw_ask_size",
             sum(
-                native_qty_paid * CASE bid WHEN true THEN 1 WHEN false THEN 0 END
-            ) as "raw_bid_size!"
-          FROM fills
+                native_quantity_paid * CASE bid WHEN true THEN 1 WHEN false THEN 0 END
+            ) as "raw_bid_size"
+          FROM openbook.openbook_fill_events
      WHERE  market = $1
             AND time >= $2
             AND time < $3
      GROUP  BY open_orders_owner
      ORDER  BY 
-        sum(native_qty_received * CASE bid WHEN true THEN 0 WHEN false THEN 1 END) 
+        sum(native_quantity_received * CASE bid WHEN true THEN 0 WHEN false THEN 1 END) 
         + 
-        sum(native_qty_paid * CASE bid WHEN true THEN 1 WHEN false THEN 0 END) 
+        sum(native_quantity_paid * CASE bid WHEN true THEN 1 WHEN false THEN 0 END) 
     DESC  
     LIMIT 10000"#;
 
@@ -249,20 +246,20 @@ pub async fn fetch_coingecko_24h_volume(
 
     let stmt = r#"SELECT 
             t1.market, 
-            COALESCE(t2.native_qty_received, 0) as "raw_base_size!",
-            COALESCE(t2.native_qty_paid, 0) as "raw_quote_size!"
+            COALESCE(t2.native_quantity_received, 0) as "raw_base_size",
+            COALESCE(t2.native_quantity_paid, 0) as "raw_quote_size"
         FROM (
             SELECT distinct on (market) *
-            FROM fills f
+            FROM openbook.openbook_fill_events f
             where bid = true
             and market = any($1) 
         order by market, "time" desc
         ) t1
         LEFT JOIN (
             select market,
-            sum(native_qty_received) as "native_qty_received",
-            sum(native_qty_paid) as "native_qty_paid"
-            from fills 
+            sum(native_quantity_received) as "native_quantity_received",
+            sum(native_quantity_paid) as "native_quantity_paid"
+            from openbook.openbook_fill_events 
             where "time" >= current_timestamp - interval '1 day' 
             and bid = true
             group by market
@@ -291,10 +288,10 @@ pub async fn fetch_coingecko_24h_high_low(
             (
               SELECT *
               from 
-                candles 
+              openbook.candles 
                where (market_name, start_time, resolution) in (
                 select market_name, max(start_time), resolution 
-                from candles 
+                from openbook.candles 
                 where "resolution" = '1M' 
                 and market_name = any($1)
                 group by market_name, resolution
@@ -307,7 +304,7 @@ pub async fn fetch_coingecko_24h_high_low(
                 max(high) as "high", 
                 min(low) as "low"
               from 
-                candles 
+              openbook.candles 
               where 
                 "resolution" = '1M' 
                 and "start_time" >= current_timestamp - interval '1 day'
@@ -320,24 +317,4 @@ pub async fn fetch_coingecko_24h_high_low(
         .into_iter()
         .map(PgCoinGecko24HighLow::from_row)
         .collect())
-}
-
-/// Fetches unprocessed, non-error transactions for the specified worker partition.
-/// Pulls at most 50 transactions at a time.
-pub async fn fetch_worker_transactions(
-    worker_id: i32,
-    pool: &Pool,
-) -> anyhow::Result<Vec<PgTransaction>> {
-    let client = pool.get().await?;
-
-    let stmt = r#"SELECT signature, program_pk, block_datetime, slot, err, "processed", worker_partition
-            FROM transactions
-            where worker_partition = $1
-            and err = false 
-            and processed = false
-            LIMIT 50"#;
-
-    let rows = client.query(stmt, &[&worker_id]).await?;
-
-    Ok(rows.into_iter().map(PgTransaction::from_row).collect())
 }

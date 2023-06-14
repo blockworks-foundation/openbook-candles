@@ -1,11 +1,9 @@
 use log::{error, info};
 use openbook_candles::structs::markets::{fetch_market_infos, load_markets};
-use openbook_candles::structs::transaction::NUM_TRANSACTION_PARTITIONS;
 use openbook_candles::utils::Config;
 use openbook_candles::worker::metrics::{
     serve_metrics, METRIC_DB_POOL_AVAILABLE, METRIC_DB_POOL_SIZE,
 };
-use openbook_candles::worker::trade_fetching::scrape::{scrape_fills, scrape_signatures};
 use openbook_candles::{
     database::initialize::{connect_to_database, setup_database},
     worker::candle_batching::batch_for_market,
@@ -39,25 +37,6 @@ async fn main() -> anyhow::Result<()> {
     let pool = connect_to_database().await?;
     setup_database(&pool).await?;
     let mut handles = vec![];
-
-    // signature scraping
-    let rpc_clone = rpc_url.clone();
-    let pool_clone = pool.clone();
-    handles.push(tokio::spawn(async move {
-        scrape_signatures(rpc_clone, &pool_clone).await.unwrap();
-    }));
-
-    // transaction/fill scraping
-    for id in 0..NUM_TRANSACTION_PARTITIONS {
-        let rpc_clone = rpc_url.clone();
-        let pool_clone = pool.clone();
-        let markets_clone = target_markets.clone();
-        handles.push(tokio::spawn(async move {
-            scrape_fills(id as i32, rpc_clone, &pool_clone, &markets_clone)
-                .await
-                .unwrap();
-        }));
-    }
 
     // candle batching
     for market in market_infos.into_iter() {

@@ -56,7 +56,7 @@ async fn batch_inner(pool: &Pool, market: &MarketInfo) -> anyhow::Result<()> {
             .with_label_values(&[market.name.as_str()])
             .inc_by(candles.clone().len() as u64);
         save_candles(pool, candles).await?;
-    }   
+    }
     Ok(())
 }
 

@@ -95,7 +95,7 @@ pub async fn fetch_latest_finished_candle(
 }
 
 /// Fetches all of the candles for the given market and resoultion, starting from the earliest.
-/// Note that this function will fetch ALL candles.
+/// Note that this function will fetch at most 2000 candles.
 pub async fn fetch_earliest_candles(
     pool: &Pool,
     market_name: &str,
@@ -117,7 +117,8 @@ pub async fn fetch_earliest_candles(
         from openbook.candles
         where market_name = $1
         and resolution = $2
-        ORDER BY start_time asc"#;
+        ORDER BY start_time asc
+        LIMIT 2000"#;
 
     let rows = client
         .query(stmt, &[&market_name, &resolution.to_string()])
@@ -246,24 +247,27 @@ pub async fn fetch_coingecko_24h_volume(
 
     let stmt = r#"SELECT 
             t1.market, 
-            COALESCE(t2.native_quantity_received, 0) as "raw_base_size",
-            COALESCE(t2.native_quantity_paid, 0) as "raw_quote_size"
+            COALESCE(t2.base_size, 0) as "base_size",
+            COALESCE(t3.quote_size, 0) as "quote_size"
         FROM (
-            SELECT distinct on (market) *
-            FROM openbook.openbook_fill_events f
-            where bid = true
-            and market = any($1) 
-        order by market, "time" desc
+            SELECT unnest($1::text[]) as market 
         ) t1
         LEFT JOIN (
             select market,
-            sum(native_quantity_received) as "native_quantity_received",
-            sum(native_quantity_paid) as "native_quantity_paid"
+            sum("size") as "base_size"
             from openbook.openbook_fill_events 
-            where "time" >= current_timestamp - interval '1 day' 
+            where block_datetime >= current_timestamp - interval '1 day' 
             and bid = true
             group by market
-        ) t2 ON t1.market = t2.market"#;
+        ) t2 ON t1.market = t2.market
+        LEFT JOIN (
+            select market,
+            sum("size" * price) as "quote_size"
+            from openbook.openbook_fill_events 
+            where block_datetime >= current_timestamp - interval '1 day' 
+            and bid = true
+            group by market
+        ) t3 ON t1.market = t3.market"#;
 
     let rows = client.query(stmt, &[&market_address_strings]).await?;
 

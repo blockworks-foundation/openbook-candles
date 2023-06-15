@@ -101,7 +101,7 @@ pub async fn create_candles_table(pool: &Pool) -> anyhow::Result<()> {
         .await?;
 
     client.execute(
-        "CREATE UNIQUE INDEX idx_market_time_resolution ON openbook.candles USING btree (market_name, start_time, resolution);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_time_resolution ON openbook.candles USING btree (market_name, start_time, resolution);",
         &[]
     ).await?;
 

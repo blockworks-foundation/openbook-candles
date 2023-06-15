@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, DurationRound, Utc};
 use deadpool_postgres::Pool;
 use log::debug;
-use std::cmp::max;
+use std::cmp::{max, min};
 
 use crate::{
     database::fetch::{fetch_candles_from, fetch_earliest_candles, fetch_latest_finished_candle},
@@ -92,7 +92,7 @@ fn combine_into_higher_order_candles(
         target_resolution,
     );
     let now = Utc::now().duration_trunc(Duration::minutes(1)).unwrap();
-    let candle_window = now - st;
+    let candle_window = min(now - st, day());
     let num_candles = max(
         1,
         (candle_window.num_minutes() / duration.num_minutes()) as usize + 1,

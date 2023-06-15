@@ -28,6 +28,9 @@ pub async fn batch_1m_candles(pool: &Pool, market: &MarketInfo) -> anyhow::Resul
                 (Utc::now() + Duration::minutes(1)).duration_trunc(Duration::minutes(1))?,
             );
             let mut fills = fetch_fills_from(pool, market_address, start_time, end_time).await?;
+            if fills.is_empty() {
+                return Ok(Vec::new());
+            }
 
             let candles = combine_fills_into_1m_candles(
                 &mut fills,

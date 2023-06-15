@@ -21,7 +21,6 @@ use super::metrics::METRIC_CANDLES_TOTAL;
 pub async fn batch_for_market(pool: &Pool, market: &MarketInfo) -> anyhow::Result<()> {
     loop {
         let market_clone = market.clone();
-
         loop {
             sleep(Duration::milliseconds(2000).to_std()?).await;
             match batch_inner(pool, &market_clone).await {
@@ -43,6 +42,9 @@ pub async fn batch_for_market(pool: &Pool, market: &MarketInfo) -> anyhow::Resul
 async fn batch_inner(pool: &Pool, market: &MarketInfo) -> anyhow::Result<()> {
     let market_name = &market.name.clone();
     let candles = batch_1m_candles(pool, market).await?;
+    if candles.is_empty() {
+        return Ok(());
+    }
     METRIC_CANDLES_TOTAL
         .with_label_values(&[market.name.as_str()])
         .inc_by(candles.clone().len() as u64);

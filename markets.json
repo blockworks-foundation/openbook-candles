@@ -34,5 +34,25 @@
     {
         "name": "RAY/USDC",
         "address": "DZjbn4XC8qoHKikZqzmhemykVzmossoayV9ffbsUqxVj"
+    },
+    {
+        "name": "mSOL/SOL",
+        "address": "AYhLYoDr6QCtVb5n1M5hsWLG74oB8VEz378brxGTnjjn"
+    },
+    {
+        "name": "stSOL/USDC",
+        "address": "JCKa72xFYGWBEVJZ7AKZ2ofugWPBfrrouQviaGaohi3R"
+    },
+    {
+        "name": "LDO/USDC",
+        "address": "BqApFW7DwXThCDZAbK13nbHksEsv6YJMCdj58sJmRLdy"
+    },
+    {
+        "name": "stSOL/SOL",
+        "address": "GoXhYTpRF4vs4gx48S7XhbaukVbJXVycXimhGfzWNGLF"
+    },
+    {
+        "name": "JitoSOL/USDC",
+        "address": "DkbVbMhFxswS32xnn1K2UY4aoBugXooBTxdzkWWDWRkH"
     }
 ]

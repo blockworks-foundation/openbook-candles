@@ -1,27 +1,25 @@
 use deadpool_postgres::Pool;
 use futures::future::join_all;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use solana_client::{
     nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
     rpc_config::RpcTransactionConfig,
 };
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::UiTransactionEncoding;
-use std::{collections::HashMap, str::FromStr};
-use tokio::sync::mpsc::Sender;
+use std::{collections::HashMap, time::Duration as WaitDuration};
 
 use crate::{
     database::{
         fetch::fetch_worker_transactions,
         insert::{build_transactions_insert_statement, insert_fills_atomically},
     },
-    structs::{openbook::OpenBookFillEvent, transaction::PgTransaction},
-    utils::{AnyhowWrap, Config, OPENBOOK_KEY},
+    structs::transaction::PgTransaction,
+    utils::{AnyhowWrap, OPENBOOK_KEY},
     worker::metrics::{METRIC_FILLS_TOTAL, METRIC_RPC_ERRORS_TOTAL, METRIC_TRANSACTIONS_TOTAL},
 };
 
 use super::parsing::parse_trades_from_openbook_txns;
-
 
 pub async fn scrape_signatures(rpc_url: String, pool: &Pool) -> anyhow::Result<()> {
     let rpc_client = RpcClient::new_with_commitment(rpc_url.clone(), CommitmentConfig::confirmed());
@@ -53,7 +51,7 @@ pub async fn scrape_signatures(rpc_url: String, pool: &Pool) -> anyhow::Result<(
         }
         let transactions: Vec<PgTransaction> = sigs
             .into_iter()
-            .map(|s| PgTransaction::from_rpc_confirmed_transaction(s))
+            .map(PgTransaction::from_rpc_confirmed_transaction)
             .collect();
 
         debug!("Scraper writing: {:?} txns to DB\n", transactions.len());
@@ -66,7 +64,6 @@ pub async fn scrape_signatures(rpc_url: String, pool: &Pool) -> anyhow::Result<(
         METRIC_TRANSACTIONS_TOTAL.inc_by(num_txns);
     }
     // TODO: graceful shutdown
-    Ok(())
 }
 
 pub async fn scrape_fills(
@@ -80,7 +77,7 @@ pub async fn scrape_fills(
 
     loop {
         let transactions = fetch_worker_transactions(worker_id, pool).await?;
-        if transactions.len() == 0 {
+        if transactions.is_empty() {
             debug!("No signatures found by worker {}", worker_id);
             tokio::time::sleep(WaitDuration::from_secs(1)).await;
             continue;
@@ -110,12 +107,13 @@ pub async fn scrape_fills(
 
         let mut txns = join_all(txn_futs).await;
 
-        // TODO: reenable total fills metric
-        let fills = parse_trades_from_openbook_txns(&mut txns, &sig_strings, target_markets);
-
-        // Write any fills to the database, and update the transactions as processed
-        insert_fills_atomically(pool, worker_id, fills, sig_strings).await?;
+        let (fills, completed_sigs) =
+            parse_trades_from_openbook_txns(&mut txns, sig_strings, target_markets);
+        for fill in fills.iter() {
+            let market_name = target_markets.get(&fill.market).unwrap();
+            METRIC_FILLS_TOTAL.with_label_values(&[market_name]).inc();
+        }
+        // Write fills to the database, and update properly fetched transactions as processed
+        insert_fills_atomically(pool, worker_id, fills, completed_sigs).await?;
     }
-
-    Ok(())
 }

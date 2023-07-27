@@ -296,7 +296,7 @@ Returns 24-hour pricing and volume information on each market available.
 
 **Request:**
 
-`GET /api/coingecko/orderbook/?ticker_id={ticker_id}&depth={depth}`
+`GET /api/coingecko/orderbook?ticker_id={ticker_id}&depth={depth}`
 
 
 Returns order book information with a specified depth for a given market. 

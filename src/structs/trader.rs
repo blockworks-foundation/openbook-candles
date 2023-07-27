@@ -9,8 +9,8 @@ use super::openbook::token_factor;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PgTrader {
     pub open_orders_owner: String,
-    pub raw_ask_size: f64,
-    pub raw_bid_size: f64,
+    pub raw_ask_size: i64,
+    pub raw_bid_size: i64,
 }
 impl PgTrader {
     pub fn from_row(row: Row) -> Self {
@@ -52,8 +52,8 @@ pub struct TraderResponse {
 
 // Note that the Postgres queries only return volumes in base or quote
 pub fn calculate_trader_volume(trader: PgTrader, decimals: u8) -> Trader {
-    let bid_size = trader.raw_bid_size / token_factor(decimals);
-    let ask_size = trader.raw_ask_size / token_factor(decimals);
+    let bid_size = (trader.raw_bid_size as f64) / token_factor(decimals);
+    let ask_size = (trader.raw_ask_size as f64) / token_factor(decimals);
 
     Trader {
         pubkey: trader.open_orders_owner,

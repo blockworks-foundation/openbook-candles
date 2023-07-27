@@ -1,20 +1,17 @@
-use deadpool_postgres::Object;
+
 
 use openbook_candles::{
-    database::{initialize::connect_to_database, insert::build_candles_upsert_statement},
+    database::{initialize::connect_to_database},
     structs::{
-        candle::Candle,
         markets::{fetch_market_infos, load_markets},
-        resolution::Resolution,
     },
-    utils::{AnyhowWrap, Config},
+    utils::{Config},
     worker::candle_batching::{
-        higher_order_candles::backfill_batch_higher_order_candles,
-        minute_candles::backfill_batch_1m_candles,
+        higher_order_candles::backfill_batch_higher_order_candles, minute_candles::backfill_batch_1m_candles,
     },
 };
 use std::env;
-use strum::IntoEnumIterator;
+
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> anyhow::Result<()> {
@@ -33,31 +30,19 @@ async fn main() -> anyhow::Result<()> {
     println!("Backfilling candles for {:?}", markets);
 
     let pool = connect_to_database().await?;
-    for market in market_infos.into_iter() {
-        let client = pool.get().await?;
-        let minute_candles = backfill_batch_1m_candles(&pool, &market).await?;
-        save_candles(minute_candles, client).await?;
+    backfill_batch_1m_candles(&pool, market_infos.clone()).await?;
 
-        for resolution in Resolution::iter() {
-            if resolution == Resolution::R1m {
-                continue;
-            }
-            let higher_order_candles =
-                backfill_batch_higher_order_candles(&pool, &market.name, resolution).await?;
-            let client = pool.get().await?;
-            save_candles(higher_order_candles, client).await?;
-        }
+    let mut handles = vec![];
+    let mi = market_infos.clone();
+    for market in mi.into_iter() {
+        let pc = pool.clone();
+        handles.push(tokio::spawn(async move {
+            backfill_batch_higher_order_candles(&pc, &market.name)
+                .await
+                .unwrap();
+        }));
     }
-    Ok(())
-}
 
-async fn save_candles(candles: Vec<Candle>, client: Object) -> anyhow::Result<()> {
-    if !candles.is_empty() {
-        let upsert_statement = build_candles_upsert_statement(&candles);
-        client
-            .execute(&upsert_statement, &[])
-            .await
-            .map_err_anyhow()?;
-    }
+    futures::future::join_all(handles).await;
     Ok(())
 }

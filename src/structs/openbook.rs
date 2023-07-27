@@ -3,9 +3,10 @@ use chrono::{DateTime, Utc};
 use num_traits::Pow;
 use tokio_postgres::Row;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PgOpenBookFill {
     pub time: DateTime<Utc>,
+    pub market_key: String,
     pub bid: bool,
     pub maker: bool,
     pub price: f64,
@@ -15,10 +16,11 @@ impl PgOpenBookFill {
     pub fn from_row(row: Row) -> Self {
         PgOpenBookFill {
             time: row.get(0),
-            bid: row.get(1),
-            maker: row.get(2),
-            price: row.get(3),
-            size: row.get(4),
+            market_key: row.get(1),
+            bid: row.get(2),
+            maker: row.get(3),
+            price: row.get(4),
+            size: row.get(5),
         }
     }
 }

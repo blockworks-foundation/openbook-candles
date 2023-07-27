@@ -1,18 +1,26 @@
-use std::cmp::min;
+use std::{cmp::min, collections::HashMap};
 
 use chrono::{DateTime, Duration, DurationRound, Utc};
 use deadpool_postgres::Pool;
+use itertools::Itertools;
 use log::debug;
 
+use crate::database::backfill::{
+    fetch_earliest_fill_multiple_markets, fetch_fills_multiple_markets_from,
+    fetch_last_minute_candles,
+};
 use crate::{
-    database::fetch::{fetch_earliest_fill, fetch_fills_from, fetch_latest_finished_candle},
+    database::{
+        fetch::{fetch_earliest_fill, fetch_fills_from, fetch_latest_finished_candle},
+        insert::build_candles_upsert_statement,
+    },
     structs::{
-        candle::Candle,
+        candle::{Candle},
         markets::MarketInfo,
         openbook::PgOpenBookFill,
         resolution::{day, Resolution},
     },
-    utils::{f64_max, f64_min},
+    utils::{f64_max, f64_min, AnyhowWrap},
 };
 
 pub async fn batch_1m_candles(pool: &Pool, market: &MarketInfo) -> anyhow::Result<Vec<Candle>> {
@@ -28,9 +36,6 @@ pub async fn batch_1m_candles(pool: &Pool, market: &MarketInfo) -> anyhow::Resul
                 (Utc::now() + Duration::minutes(1)).duration_trunc(Duration::minutes(1))?,
             );
             let mut fills = fetch_fills_from(pool, market_address, start_time, end_time).await?;
-            if fills.is_empty() {
-                return Ok(Vec::new());
-            }
 
             let candles = combine_fills_into_1m_candles(
                 &mut fills,
@@ -124,17 +129,19 @@ fn combine_fills_into_1m_candles(
 /// Goes from the earliest fill to the most recent. Will mark candles as complete if there are missing gaps of fills between the start and end.
 pub async fn backfill_batch_1m_candles(
     pool: &Pool,
-    market: &MarketInfo,
-) -> anyhow::Result<Vec<Candle>> {
-    let market_name = &market.name;
-    let market_address = &market.address;
-    let mut candles = vec![];
+    markets: Vec<MarketInfo>,
+) -> anyhow::Result<()> {
+    let market_address_strings: Vec<String> = markets.iter().map(|m| m.address.clone()).collect();
+    let mut candle_container = HashMap::new();
+    let client = pool.get().await?;
 
-    let earliest_fill = fetch_earliest_fill(pool, &market.address).await?;
+    let earliest_fill =
+        fetch_earliest_fill_multiple_markets(&client, &market_address_strings).await?;
     if earliest_fill.is_none() {
-        debug!("No fills found for: {:?}", &market_name);
-        return Ok(candles);
+        println!("No fills found for backfill");
+        return Ok(());
     }
+    println!("Found earliset fill for backfill");
 
     let mut start_time = earliest_fill
         .unwrap()
@@ -145,13 +152,78 @@ pub async fn backfill_batch_1m_candles(
             start_time + day(),
             Utc::now().duration_trunc(Duration::minutes(1))?,
         );
-        let mut fills = fetch_fills_from(pool, market_address, start_time, end_time).await?;
-        if !fills.is_empty() {
-            let mut minute_candles =
+        let last_candles = fetch_last_minute_candles(&client).await?;
+        let all_fills = fetch_fills_multiple_markets_from(
+            &client,
+            &market_address_strings,
+            start_time,
+            end_time,
+        )
+        .await?;
+        // println!("{:?} {:?}", start_time, end_time);
+        // println!("all fills len : {:?}", all_fills.len());
+        println!("{:?}", all_fills[0]);
+        // println!("{:?}", all_fills[1]);
+        // println!("Fetched multiple fills for backfill");
+        let fills_groups = all_fills
+            .into_iter()
+            .sorted_by(|a, b| Ord::cmp(&a.market_key, &b.market_key))
+            .group_by(|f| f.market_key.clone());
+
+        let fills_by_market: Vec<(String, Vec<PgOpenBookFill>)> = fills_groups
+            .into_iter()
+            .map(|(m, group)| (m, group.collect()))
+            .collect();
+
+        println!("fbm len : {:?}", fills_by_market.len());
+        // sort fills by market, make candles
+        for (_, mut fills) in fills_by_market {
+            let market = markets
+                .iter()
+                .find(|m| m.address == fills[0].market_key)
+                .unwrap();
+            let minute_candles =
                 combine_fills_into_1m_candles(&mut fills, market, start_time, end_time, None);
-            candles.append(&mut minute_candles);
+            candle_container.insert(&market.address, minute_candles);
         }
-        start_time += day()
+
+        // where no candles, make empty ones
+        for (k, v) in candle_container.iter_mut() {
+            if v.is_empty() {
+                let market = markets.iter().find(|m| &m.address == *k).unwrap();
+                let last_candle = last_candles
+                    .iter()
+                    .find(|c| c.market_name == market.name)
+                    .unwrap();
+                let empty_candles = combine_fills_into_1m_candles(
+                    &mut vec![],
+                    market,
+                    start_time,
+                    end_time,
+                    Some(last_candle.close),
+                );
+                *v = empty_candles;
+            }
+        }
+
+        // insert candles in batches
+        for candles in candle_container.values() {
+            let candle_chunks: Vec<Vec<Candle>> =
+                candles.chunks(1500).map(|chunk| chunk.to_vec()).collect(); // 1440 minutes in a day
+            for c in candle_chunks {
+                let upsert_statement = build_candles_upsert_statement(&c);
+                client
+                    .execute(&upsert_statement, &[])
+                    .await
+                    .map_err_anyhow()?;
+            }
+        }
+        // reset entries but keep markets we've seen for blank candles
+        for (_, v) in candle_container.iter_mut() {
+            *v = vec![];
+        }
+        println!("day done");
+        start_time += day();
     }
-    Ok(candles)
+    Ok(())
 }

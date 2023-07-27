@@ -2,14 +2,21 @@ use chrono::{DateTime, Duration, DurationRound, Utc};
 use deadpool_postgres::Pool;
 use log::debug;
 use std::cmp::{max, min};
+use strum::IntoEnumIterator;
 
 use crate::{
-    database::fetch::{fetch_candles_from, fetch_earliest_candles, fetch_latest_finished_candle},
+    database::{
+        fetch::{
+            fetch_candles_from, fetch_earliest_candles,
+            fetch_latest_finished_candle,
+        },
+        insert::build_candles_upsert_statement,
+    },
     structs::{
         candle::Candle,
         resolution::{day, Resolution},
     },
-    utils::{f64_max, f64_min},
+    utils::{f64_max, f64_min, AnyhowWrap},
 };
 
 pub async fn batch_higher_order_candles(
@@ -34,12 +41,8 @@ pub async fn batch_higher_order_candles(
             if constituent_candles.is_empty() {
                 return Ok(Vec::new());
             }
-            let combined_candles = combine_into_higher_order_candles(
-                &mut constituent_candles,
-                resolution,
-                start_time,
-                candle,
-            );
+            let combined_candles =
+                combine_into_higher_order_candles(&mut constituent_candles, resolution, start_time);
             Ok(combined_candles)
         }
         None => {
@@ -61,13 +64,8 @@ pub async fn batch_higher_order_candles(
                 return Ok(Vec::new());
             }
 
-            let seed_candle = constituent_candles[0].clone();
-            let combined_candles = combine_into_higher_order_candles(
-                &mut constituent_candles,
-                resolution,
-                start_time,
-                seed_candle,
-            );
+            let combined_candles =
+                combine_into_higher_order_candles(&mut constituent_candles, resolution, start_time);
 
             Ok(trim_candles(
                 combined_candles,
@@ -78,10 +76,9 @@ pub async fn batch_higher_order_candles(
 }
 
 fn combine_into_higher_order_candles(
-    constituent_candles: &mut Vec<Candle>,
+    constituent_candles: &Vec<Candle>,
     target_resolution: Resolution,
     st: DateTime<Utc>,
-    seed_candle: Candle,
 ) -> Vec<Candle> {
     debug!("combining for target_resolution: {}", target_resolution);
 
@@ -100,17 +97,16 @@ fn combine_into_higher_order_candles(
 
     let mut combined_candles = vec![empty_candle; num_candles];
 
-    let mut con_iter = constituent_candles.iter_mut().peekable();
+    let mut last_close = constituent_candles[0].close;
+    let mut con_iter = constituent_candles.iter().peekable();
     let mut start_time = st;
     let mut end_time = start_time + duration;
 
-    let mut last_candle = seed_candle;
-
     for i in 0..combined_candles.len() {
-        combined_candles[i].open = last_candle.close;
-        combined_candles[i].low = last_candle.close;
-        combined_candles[i].close = last_candle.close;
-        combined_candles[i].high = last_candle.close;
+        combined_candles[i].open = last_close;
+        combined_candles[i].low = last_close;
+        combined_candles[i].close = last_close;
+        combined_candles[i].high = last_close;
 
         while matches!(con_iter.peek(), Some(c) if c.end_time <= end_time) {
             let unit_candle = con_iter.next().unwrap();
@@ -128,7 +124,7 @@ fn combine_into_higher_order_candles(
         start_time = end_time;
         end_time += duration;
 
-        last_candle = combined_candles[i].clone();
+        last_close = combined_candles[i].close;
     }
 
     combined_candles
@@ -149,25 +145,38 @@ fn trim_candles(mut c: Vec<Candle>, start_time: DateTime<Utc>) -> Vec<Candle> {
 pub async fn backfill_batch_higher_order_candles(
     pool: &Pool,
     market_name: &str,
-    resolution: Resolution,
-) -> anyhow::Result<Vec<Candle>> {
-    let mut constituent_candles =
-        fetch_earliest_candles(pool, market_name, resolution.get_constituent_resolution()).await?;
-    if constituent_candles.is_empty() {
-        return Ok(vec![]);
+) -> anyhow::Result<()> {
+    let earliest_candles = fetch_earliest_candles(pool, market_name, Resolution::R1m).await?;
+    let mut start_time = earliest_candles[0].start_time.duration_trunc(day())?;
+    while start_time < Utc::now() {
+        let mut candles = vec![];
+        let mut constituent_candles = fetch_candles_from(
+            pool,
+            market_name,
+            Resolution::R1m,
+            start_time,
+            start_time + day(),
+        )
+        .await?;
+
+        for resolution in Resolution::iter() {
+            if resolution == Resolution::R1m {
+                continue;
+            }
+            let mut combined_candles =
+                combine_into_higher_order_candles(&mut constituent_candles, resolution, start_time);
+            candles.append(&mut combined_candles);
+        }
+
+        let upsert_statement = build_candles_upsert_statement(&candles);
+        let client = pool.get().await.unwrap();
+        client
+            .execute(&upsert_statement, &[])
+            .await
+            .map_err_anyhow()?;
+        // println!("{:?} {:?} done", market_name, start_time);
+        start_time += day();
     }
-    let start_time = constituent_candles[0].start_time.duration_trunc(day())?;
 
-    let seed_candle = constituent_candles[0].clone();
-    let combined_candles = combine_into_higher_order_candles(
-        &mut constituent_candles,
-        resolution,
-        start_time,
-        seed_candle,
-    );
-
-    Ok(trim_candles(
-        combined_candles,
-        constituent_candles[0].start_time,
-    ))
+    Ok(())
 }

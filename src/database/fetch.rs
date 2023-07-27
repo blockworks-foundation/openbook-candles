@@ -16,6 +16,7 @@ pub async fn fetch_earliest_fill(
 
     let stmt = r#"SELECT 
         block_datetime as "time",
+        market as "market_key",
         bid as "bid",
         maker as "maker",
         price as "price",
@@ -43,6 +44,7 @@ pub async fn fetch_fills_from(
 
     let stmt = r#"SELECT 
          block_datetime as "time",
+         market as "market_key",
          bid as "bid",
          maker as "maker",
          price as "price",
@@ -94,7 +96,7 @@ pub async fn fetch_latest_finished_candle(
     }
 }
 
-/// Fetches all of the candles for the given market and resoultion, starting from the earliest.
+/// Fetches all of the candles for the given market and resolution, starting from the earliest.
 /// Note that this function will fetch at most 2000 candles.
 pub async fn fetch_earliest_candles(
     pool: &Pool,

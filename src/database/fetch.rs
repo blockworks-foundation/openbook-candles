@@ -281,43 +281,77 @@ pub async fn fetch_coingecko_24h_volume(
 
 pub async fn fetch_coingecko_24h_high_low(
     pool: &Pool,
-    market_names: &Vec<&str>,
+    market_address_strings: &Vec<&str>,
 ) -> anyhow::Result<Vec<PgCoinGecko24HighLow>> {
     let client = pool.get().await?;
 
-    let stmt = r#"select 
-            r.market_name as "market_name!", 
-            coalesce(c.high, r.high) as "high!", 
-            coalesce(c.low, r.low) as "low!", 
-            r."close" as "close!"
-          from 
+    let stmt = r#"
+    with markets as (
+        select market, "close" from (
+            select 
+            ofe.market,
+            price as "close", 
+            instruction_num,
+            row_number() over (partition by ofe.market order by ofe.instruction_num desc) as row_num
+            from openbook.openbook_fill_events ofe 
+            join (
+                select market, max(block_datetime) as max_time
+                from openbook.openbook_fill_events ofe 
+                where market in (SELECT unnest($1::text[]))
+                group by market
+            ) x 
+            on ofe.block_datetime = x.max_time
+            and ofe.market = x.market
+        ) x2 where row_num = 1
+        ) 
+        select 
+            m.market as "address!", 
+            coalesce(a.high, m."close") as "high!", 
+            coalesce(a.low, m."close") as "low!", 
+            coalesce(a."close", m."close") as "close!"
+        from markets m
+        left join 
+        (
+        select * from 
             (
-              SELECT *
-              from 
-              openbook.candles 
-               where (market_name, start_time, resolution) in (
-                select market_name, max(start_time), resolution 
-                from openbook.candles 
-                where "resolution" = '1M' 
-                and market_name = any($1)
-                group by market_name, resolution
-            )
-            ) as r 
-            left join (
-            SELECT 
-                market_name, 
-                max(start_time) as "start_time", 
-                max(high) as "high", 
-                min(low) as "low"
-              from 
-              openbook.candles 
-              where 
-                "resolution" = '1M' 
-                and "start_time" >= current_timestamp - interval '1 day'
-                group by market_name
-            ) c on r.market_name = c.market_name"#;
+                select 
+                g.market,
+                g.high,
+                g.low,
+                ofe.price as close,
+                row_number() over (partition by ofe.market order by ofe.instruction_num desc) as row_num
+                from openbook.openbook_fill_events ofe 
+                join (
+                    select 
+                     market,
+                     max(price) as "high",
+                     min(price) as "low",
+                     max(block_datetime) as max_time,
+                     max(seq_num) as seq_num
+                     from openbook.openbook_fill_events ofe 
+                     where ofe.block_datetime > current_timestamp - interval '1 day'
+                     and market in (SELECT unnest($1::text[]))
+                     group by market
+                ) g
+                on g.market = ofe.market 
+                and g.max_time = ofe.block_datetime
+                and g.seq_num = ofe.seq_num
+                join (
+                    select 
+                     market,
+                     max(block_datetime) as max_time
+                     from openbook.openbook_fill_events ofe 
+                     where market in (SELECT unnest($1::text[]))
+                     group by market
+                ) b
+                on b.market = ofe.market 
+                and b.max_time = ofe.block_datetime
+            ) a2
+            where a2.row_num = 1
+        ) a
+        on a.market = m.market"#;
 
-    let rows = client.query(stmt, &[&market_names]).await?;
+    let rows = client.query(stmt, &[&market_address_strings]).await?;
 
     Ok(rows
         .into_iter()

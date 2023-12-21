@@ -7,8 +7,8 @@ use openbook_candles::{
     database::fetch::{fetch_coingecko_24h_high_low, fetch_coingecko_24h_volume},
     structs::{
         coingecko::{
-            CoinGecko24HourVolume, CoinGeckoOrderBook, CoinGeckoPair, CoinGeckoTicker,
-            PgCoinGecko24HighLow,
+            CoinGeckoOrderBook, CoinGeckoPair, CoinGeckoTicker, PgCoinGecko24HighLow,
+            PgCoinGecko24HourVolume,
         },
         slab::get_orderbooks_with_depth,
     },
@@ -51,12 +51,11 @@ pub async fn pairs(context: web::Data<WebContext>) -> Result<HttpResponse, Serve
 pub async fn tickers(context: web::Data<WebContext>) -> Result<HttpResponse, ServerError> {
     // let client = RpcClient::new(context.rpc_url.clone());
     let markets = &context.markets;
-    let market_names = markets.iter().map(|x| x.name.as_str()).collect();
     let market_addresses = markets.iter().map(|x| x.address.as_str()).collect();
 
     // let bba_fut = get_best_bids_and_asks(client, markets);
     let volume_fut = fetch_coingecko_24h_volume(&context.pool, &market_addresses);
-    let high_low_fut = fetch_coingecko_24h_high_low(&context.pool, &market_names);
+    let high_low_fut = fetch_coingecko_24h_high_low(&context.pool, &market_addresses);
 
     let (volume_query, high_low_quey) = join!(volume_fut, high_low_fut,);
 
@@ -70,31 +69,27 @@ pub async fn tickers(context: web::Data<WebContext>) -> Result<HttpResponse, Ser
     };
 
     let default_hl = PgCoinGecko24HighLow::default();
-    let default_volume = CoinGecko24HourVolume::default();
-    let volumes: Vec<CoinGecko24HourVolume> = raw_volumes
-        .into_iter()
-        .map(|v| v.convert_to_readable(markets))
-        .collect();
+    let default_volume = PgCoinGecko24HourVolume::default();
     let tickers = markets
         .iter()
         .enumerate()
         .map(|(_index, m)| {
-            let name = m.name.clone();
             let high_low = high_low
                 .iter()
-                .find(|x| x.market_name == name)
+                .find(|x| x.address == m.address)
                 .unwrap_or(&default_hl);
-            let volume = volumes
+            let volume = raw_volumes
                 .iter()
-                .find(|x| x.market_name == name)
+                .find(|x| x.address == m.address)
                 .unwrap_or(&default_volume);
             CoinGeckoTicker {
                 ticker_id: m.name.clone(),
+                address: m.address.clone(),
                 base_currency: m.base_mint_key.clone(),
                 target_currency: m.quote_mint_key.clone(),
                 last_price: high_low.close.to_string(),
-                base_volume: volume.base_volume.to_string(),
-                target_volume: volume.target_volume.to_string(),
+                base_volume: volume.base_size.to_string(),
+                target_volume: volume.quote_size.to_string(),
                 high: high_low.high.to_string(),
                 low: high_low.low.to_string(),
             }

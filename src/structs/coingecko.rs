@@ -1,8 +1,6 @@
 use serde::Serialize;
 use tokio_postgres::Row;
 
-use super::markets::MarketInfo;
-
 #[derive(Debug, Clone, Serialize)]
 pub struct CoinGeckoOrderBook {
     pub ticker_id: String,
@@ -22,6 +20,7 @@ pub struct CoinGeckoPair {
 #[derive(Debug, Clone, Serialize)]
 pub struct CoinGeckoTicker {
     pub ticker_id: String,
+    pub address: String,
     pub base_currency: String,
     pub target_currency: String,
     pub last_price: String,
@@ -33,21 +32,13 @@ pub struct CoinGeckoTicker {
     pub low: String,
 }
 
+#[derive(Debug, Default)]
 pub struct PgCoinGecko24HourVolume {
     pub address: String,
     pub base_size: f64,
     pub quote_size: f64,
 }
 impl PgCoinGecko24HourVolume {
-    pub fn convert_to_readable(&self, markets: &Vec<MarketInfo>) -> CoinGecko24HourVolume {
-        let market = markets.iter().find(|m| m.address == self.address).unwrap();
-        CoinGecko24HourVolume {
-            market_name: market.name.clone(),
-            base_volume: self.base_size,
-            target_volume: self.quote_size,
-        }
-    }
-
     pub fn from_row(row: Row) -> Self {
         PgCoinGecko24HourVolume {
             address: row.get(0),
@@ -58,15 +49,8 @@ impl PgCoinGecko24HourVolume {
 }
 
 #[derive(Debug, Default)]
-pub struct CoinGecko24HourVolume {
-    pub market_name: String,
-    pub base_volume: f64,
-    pub target_volume: f64,
-}
-
-#[derive(Debug, Default)]
 pub struct PgCoinGecko24HighLow {
-    pub market_name: String,
+    pub address: String,
     pub high: f64,
     pub low: f64,
     pub close: f64,
@@ -75,7 +59,7 @@ pub struct PgCoinGecko24HighLow {
 impl PgCoinGecko24HighLow {
     pub fn from_row(row: Row) -> Self {
         PgCoinGecko24HighLow {
-            market_name: row.get(0),
+            address: row.get(0),
             high: row.get(1),
             low: row.get(2),
             close: row.get(3),
